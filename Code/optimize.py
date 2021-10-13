@@ -8,8 +8,8 @@ from sklearn.model_selection import RandomizedSearchCV
 
 # Importing the data
 
-X = pd.read_csv('cleaned_X.csv')
-y = pd.read_csv('cleaned_y.csv')
+X = pd.read_csv('../data/cleaned_X.csv')
+y = pd.read_csv('../data/cleaned_y.csv')
 y = y['Label_dark']
 
 # Previewing the data to make sure it's the correct cleaned data
