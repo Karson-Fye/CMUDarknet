@@ -25,8 +25,9 @@ X_train, X_test, y_train, y_test = train_test_split(
 rf = RandomForestClassifier(random_state = 1)
 print('Parameters currently in use:\n')
 pprint(rf.get_params())
+
 n_estimators = [int(x) for x in np.linspace(start = 200, stop = 2000, num = 10)]
-max_features = ['auto', 'sqrt']
+max_features = ['sqrt', 'log2']
 max_depth = [int(x) for x in np.linspace(10, 110, num = 11)]
 max_depth.append(None)
 min_samples_split = [2, 5, 10]
@@ -44,7 +45,8 @@ pprint(random_grid)
 # The randomized search for the best parameters
 
 rf_random = RandomizedSearchCV(estimator = rf, param_distributions = random_grid, n_iter = 100, cv = 3, verbose=2, random_state=42, n_jobs = -1)
-# Fit the random search model
+
+# Fit with the random search best model
 rf_random.fit(X_train, y_train)
 
 # What the randomized search found...
@@ -75,3 +77,22 @@ random_accuracy = evaluate(best_random, X_test, y_test)
 
 print()
 print('Improvement of {:0.2f}%.'.format( 100 * (random_accuracy - base_accuracy) / base_accuracy))
+
+'''
+{'bootstrap': True,
+ 'max_depth': 20,
+ 'max_features': 'sqrt',
+ 'min_samples_leaf': 1,
+ 'min_samples_split': 2,
+ 'n_estimators': 1000}
+
+Model Performance
+Average Error: 0.0199 degrees.
+Accuracy = 98%
+
+Model Performance
+Average Error: 0.0162 degrees.
+Accuracy = 98%
+
+Improvement of 0.38%.
+'''
