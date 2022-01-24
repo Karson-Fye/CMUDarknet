@@ -44,7 +44,7 @@ pprint(random_grid)
 
 # The randomized search for the best parameters
 
-rf_random = RandomizedSearchCV(estimator = rf, param_distributions = random_grid, n_iter = 100, cv = 3, verbose=2, random_state=42, n_jobs = -1)
+rf_random = RandomizedSearchCV(estimator = rf, param_distributions = random_grid, n_iter = 300, cv = 3, verbose=2, random_state=42, n_jobs = -1)
 
 # Fit with the random search best model
 rf_random.fit(X_train, y_train)
@@ -60,12 +60,14 @@ def evaluate(model, test_features, test_labels):
   predictions = model.predict(test_features)
   errors = abs(predictions - test_labels)
   accuracy = metrics.accuracy_score(test_labels, predictions)
+
   print('\n\n')
   print('Model Performance')
   print('Average Error: {:0.4f} degrees.'.format(np.mean(errors)))
-  print('Accuracy = {:0.2f}%.'.format(accuracy))
+  print('Accuracy = {:0.4f}%.'.format(accuracy))
   
   return accuracy
+
 base_model = RandomForestClassifier(n_estimators = 10, random_state = 1)
 base_model.fit(X_train, y_train)
 base_accuracy = evaluate(base_model, X_test, y_test)
