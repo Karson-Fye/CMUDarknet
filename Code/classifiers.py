@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from scipy import rand
 from sklearn import metrics
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
@@ -27,7 +28,7 @@ def logRegression(X_train,X_test,y_train,y_test):
 
 def randomForest(X_train,X_test,y_train,y_test):
   print("Random Forest")
-  rf = RandomForestClassifier()
+  rf = RandomForestClassifier(random_state=0)
   rf.fit(X_train , y_train)
   rf_pred = rf.predict(X_test)  
   # accuracy.append(metrics.accuracy_score(y_test, rf_pred))
@@ -36,7 +37,7 @@ def randomForest(X_train,X_test,y_train,y_test):
 
 def gradientBoosting(X_train,X_test,y_train,y_test):
   print("Gradient Boosting")
-  gb = GradientBoostingClassifier()
+  gb = GradientBoostingClassifier(random_state=0)
   gb.fit(X_train , y_train)
   gb_pred = gb.predict(X_test)
   # accuracy.append(metrics.accuracy_score(y_test, gb_pred))
@@ -45,7 +46,7 @@ def gradientBoosting(X_train,X_test,y_train,y_test):
 
 def adaBoost(X_train,X_test,y_train,y_test):
   print("ADA Boost")
-  ada = AdaBoostClassifier()
+  ada = AdaBoostClassifier(random_state=0)
   ada.fit(X_train , y_train)
   ada_pred = ada.predict(X_test)
   # accuracy.append(metrics.accuracy_score(y_test, ada_pred))
@@ -63,7 +64,7 @@ def knn(X_train,X_test,y_train,y_test):
 
 def sdg(X_train,X_test,y_train,y_test):
   print("SDG")
-  sdg = SGDClassifier()
+  sdg = SGDClassifier(random_state=0)
   sdg.fit(X_train, y_train)
   sdg_pred = sdg.predict(X_test)
   # accuracy.append(metrics.accuracy_score(y_test, sdg_pred))
