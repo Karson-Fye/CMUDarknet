@@ -31,4 +31,4 @@ A repository for our work at the Colorado Mesa University Cyber Security Center,
 
 
 
-Resources: https://docs.google.com/document/d/13erKPXrEXvrKJOL-ZZAp2OTK-MJlZRxmcj9pDKceKGw/edit?usp=sharing
+[Resources](https://docs.google.com/document/d/13erKPXrEXvrKJOL-ZZAp2OTK-MJlZRxmcj9pDKceKGw/edit?usp=sharing)
