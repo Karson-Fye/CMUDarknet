@@ -2,10 +2,10 @@
 ### Using ML techniques to detect darknet traffic over the network using the CICDarknet2020 dataset.
 
 Contributers: 
-  * Drake Cullen
   * Jackson Warren
-  * James E. Halladay
   * Karson Fye
+  * Drake Cullen
+  * James E. Halladay
   * Nathan Briner
   * Ram Basnet
   * Jeremy Bergen
