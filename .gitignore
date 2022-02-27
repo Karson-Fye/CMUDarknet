@@ -9,6 +9,9 @@ __pycache__/
 # CSV files
 *.csv
 
+# Fastai models
+*.model.pth
+
 # Pickle files for CSV caching
 *.csv.pickle
 *.pickle
