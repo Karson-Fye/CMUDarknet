@@ -9,6 +9,9 @@ __pycache__/
 # CSV files
 *.csv
 
+# Arff files
+*.arff
+
 # Fastai models
 *.model.pth
 
