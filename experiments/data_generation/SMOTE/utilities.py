@@ -1,16 +1,16 @@
-import colorsys, datetime, os, pathlib, platform, pprint, sys
+import colorsys, datetime, os, pathlib, platform, pprint, sys, contextlib
 import fastai
 #import gtda
-#import ipywidgets as widgets
+import ipywidgets as widgets
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import PIL
 import PIL.Image as Image
-#import plotly as py
-#import plotly.graph_objs as go
-#import plotly.io as pio
+import plotly as py
+import plotly.graph_objs as go
+import plotly.io as pio
 import seaborn as sns
 #import sdv
 import sklearn
@@ -22,10 +22,22 @@ from imblearn.over_sampling import SMOTE
 from collections import Counter
 from matplotlib import pyplot
 
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from lightgbm import LGBMClassifier
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.pipeline import Pipeline                             
+from sklearn.preprocessing import Normalizer, StandardScaler, MinMaxScaler, PowerTransformer, MaxAbsScaler, LabelEncoder
+from sklearn.model_selection import GridSearchCV    
+
+import pickle
 from collections import namedtuple
 
 from fastai.tabular.all import FillMissing, Categorify, Normalize, tabular_learner, accuracy, ClassificationInterpretation, ShowGraphCallback, RandomSplitter, range_of
-#from fastai.callback.all import LRFinder, EarlyStoppingCallback, SaveModelCallback, ShowGraphCallback, CSVLogger, slide, steep, minimum, valley
+from fastai.callback.all import CollectDataCallback, Callback, ProgressCallback
+from fastai.callback.all import LRFinder, EarlyStoppingCallback, SaveModelCallback, ShowGraphCallback, CSVLogger, slide, steep, minimum, valley
 from fastai.data.all import Transform, DisplayedTransform
 from fastai.metrics import MatthewsCorrCoef, F1Score, Recall, Precision, RocAuc, BalancedAccuracy
 from fastai.optimizer import ranger, Adam
@@ -34,22 +46,29 @@ from fastai.tabular.all import FillMissing, Categorify, Normalize, tabular_learn
 from fastai.tabular.all import get_emb_sz, Module, Learner, Embedding, CrossEntropyLossFlat, IndexSplitter, ColSplitter, RandomSplitter
 from fastai.tabular.all import delegates, tabular_config, TabularLearner, get_c, ifnone, is_listy, LinBnDrop, SigmoidRange 
 from fastai.test_utils import synth_learner, VerboseCallback
+from fastcore.all import Transform, store_attr, L
+from fastcore.all import L
+from fastai.basics import Tensor
 
-#from fast_tabnet.core import TabNetModel as TabNet, tabnet_feature_importances, tabnet_explain
+
+from fast_tabnet.core import TabNetModel as TabNet, tabnet_feature_importances, tabnet_explain
 
 from fastcore.all import Transform, store_attr
-import copy
 
+fastai_gpu_conflict = True
+if(fastai_gpu_conflict):
+    torch.cuda.is_available = lambda : False
+
+import copy
 
 #from gtda.curves import Derivative, StandardFeatures
 #from gtda.diagrams import PersistenceEntropy, Amplitude, NumberOfPoints, ComplexPolynomial, PersistenceLandscape, PersistenceImage, BettiCurve, Silhouette, HeatKernel
 #from gtda.homology import VietorisRipsPersistence, EuclideanCechPersistence
 #from gtda.plotting import plot_diagram, plot_point_cloud, plot_betti_curves, plot_betti_surfaces
 
-#from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
-#from plotly.subplots import make_subplots
-
-#from pytorch_tabnet.tab_network import TabNetNoEmbeddings
+from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
+from plotly.subplots import make_subplots
+from pytorch_tabnet.tab_network import TabNetNoEmbeddings
 
 #from sdv.tabular import TVAE, CopulaGAN, CTGAN, GaussianCopula
 #from sdv.evaluation import evaluate
@@ -60,7 +79,7 @@ from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectKBest
 from sklearn.manifold import TSNE
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, f1_score, roc_auc_score, matthews_corrcoef
 from sklearn.model_selection import train_test_split, StratifiedShuffleSplit, KFold, cross_val_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
@@ -100,7 +119,7 @@ print(
     \tsklearn:\t{sklearn.__version__}
     \ttorch:\t\t{torch.__version__}
     \tyellowbrick:\t{yb.__version__}
-    \timbalanced learn:\t{imblearn.__version__}
+    \timblearn:\t{imblearn.__version__}
     '''
 )
 
@@ -662,6 +681,119 @@ def test_pruned_size(data_summary_original: dict, data_summary_pruned: dict, pru
 
     return True
 
+class DFLogger(Callback):
+    '''
+        Class defines a callback that is passed to the fastai learner that
+            will save the recorded metrics for each epoch to a dataframe
+    '''
+    order=60
+    def __init__(self, fname='history.csv', append=False):
+        self.fname,self.append = pathlib.Path(fname),append
+        self.df = pd.DataFrame()
+        self.flag = True
+
+    def to_csv(self, file: str or None = None):
+        if file is None:
+            self.df.to_csv(self.path/self.fname, index=False)
+        else:
+            self.df.to_csv(file, index=False)
+
+    def before_fit(self):
+        "Prepare file with metric names."
+        if hasattr(self, "gather_preds"): return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.old_logger,self.learn.logger = self.logger,self.add_row
+
+    def add_row(self, log):
+        "Write a line with `log` and call the old logger."
+        if(self.flag):
+            self.df = pd.DataFrame([log], columns=self.recorder.metric_names)
+            self.flag = False
+        else:
+            if (len(log) == len(self.df.columns)):
+                self.new_row = pd.DataFrame([log], columns=self.recorder.metric_names)
+                self.df = pd.concat([self.df, self.new_row], ignore_index=True)
+
+    def after_fit(self):
+        "Close the file and clean up."
+        if hasattr(self, "gather_preds"): return
+        self.learn.logger = self.old_logger
+
+
+
+class LazyGraphCallback(Callback):
+    '''
+        Class defines a callback that is passed to the fastai learner that
+            saves the validation and training loss metrics to graph when
+            calling the .plot_graph() method
+        
+        This allows us to display the train/validation loss graph after the    
+            experiment is run, even if it is run in no_bar mode
+    '''
+    order: int = 65
+    run_valid: bool = False
+    
+    def __init__(self):
+        self.graph_params: list = []
+        self.graphs: list = []
+
+    def before_fit(self):
+        self.run = not hasattr(self.learn, 'lr_finder') and not hasattr(self, "gather_preds")
+        if not self.run: return
+        self.nb_batches: list = []
+
+    def after_train(self): self.nb_batches.append(self.train_iter)
+
+    def after_epoch(self):
+        "Plot validation loss in the pbar graph"
+        if not self.nb_batches: return
+        rec = self.learn.recorder
+        iters = range_of(rec.losses)
+        val_losses = [v[1] for v in rec.values]
+        x_bounds = (0, (self.n_epoch - len(self.nb_batches)) * self.nb_batches[0] + len(rec.losses))
+        y_bounds = (0, max((max(Tensor(rec.losses)), max(Tensor(val_losses)))))
+        self.graph_params.append(([(iters, rec.losses), (self.nb_batches, val_losses)], x_bounds, y_bounds))
+
+
+    def plot_graph(self, ax: plt.Axes or None = None, title: str = 'Loss'):
+
+        params = self.graph_params[-1]
+        
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 4))
+        ax.set_title(title)
+        ax.set_xlabel('Iterations')
+        ax.set_ylabel('Loss')
+        ax.plot(params[0][0][0], params[0][0][1], label='Training')
+        ax.plot(params[0][1][0], params[0][1][1], label='Validation')
+        ax.legend()
+
+
+
+class ModelStatsCallback(Callback):
+    '''
+        Collect all batches, along with `pred` and `loss`, into `self.datum`.
+        This allows the data to be used after the model is used.
+    '''
+    order=60 # mysterious param we need to investigate
+    def __init__(self):
+        self.datum: list = []
+        self.records: list = []
+        self.c_idx: int  = -1
+
+    def before_fit(self):
+        self.datum.append(L())
+        self.records.append({'loss': [], 'predictions': []})
+        self.c_idx += 1
+
+
+    def after_batch(self):
+        vals = self.learn.to_detach((self.xb,self.yb,self.pred,self.loss))
+        self.datum[self.c_idx].append(vals)
+        self.records[self.c_idx]['predictions'].append(vals[2])
+        self.records[self.c_idx]['loss'].append(vals[3])
+        self.records[self.c_idx]['iters'] = range_of(self.recorder.losses)
+
 ## pytorch --> fastai models
 
 class ResidualBlock(Module):
@@ -756,442 +888,145 @@ Model_data = namedtuple(
     ['name', 'model', 'classes', 'X_train', 'y_train', 'X_test', 'y_test', 'to', 'dls', 'model_type']
 )
 
-# todo: standardize new format of experiment runners
-
-def run_deep_nn_experiment(
-    df: pd.DataFrame, 
-    file_name: str, 
-    target_label: str, 
-    shape: tuple, 
-    split=0.2, 
-    categorical: list = ['Protocol'],
-    procs = [FillMissing, Categorify, Normalize], 
-    leave_out: list = [],
-    epochs: int = 10,
-    batch_size: int = 64,
-    metrics: list or None = None,
-    callbacks: list = [ShowGraphCallback],
-    lr_choice: str = 'valley',
-    name: str or None = None,
-) -> Model_data:
+class ResidualBlock(Module):
     '''
-        Function trains a deep neural network model on the given data. 
-
-        Parameters:
-            df: pandas dataframe containing the data
-            file_name: name of the file the dataset came from
-            target_label: the label to predict
-            shape: the shape of the neural network, the i-th value in the tuple represents the number of nodes in the i+1 layer
-                    and the number of entries in the tuple represent the number of layers
-            name: name of the experiment, if none a default is given
-            split: the percentage of the data to use for testing
-            categorical: list of the categorical columns
-            procs: list of preprocessing functions to apply in the dataloaders pipeline
-                    additional options are: 
-                        PCA_tabular (generate n principal components) 
-                        Normal (features are scaled to the interval [0,1])
-            leave_out: list of columns to leave out of the experiment
-            epochs: number of epochs to train for
-            batch_size: number of samples processed in one forward and backward pass of the model
-            metrics: list of metrics to calculate and display during training
-            callbacks: list of callbacks to apply during training
-            lr_choice: where the learning rate sampling function should find the optimal learning rate
-                        choices are: 'valley', 'steep', 'slide', and 'minimum'
-         
-        
-        returns a model data named tuple
-            model_data: tuple = (file_name, model, classes, X_train, y_train, X_test, y_test, model_type)
+        A simple residule block that creates a skip connection around any input module
+        Output size of the input module must match the module's input size
     '''
-    shape = tuple(shape)
+    def __init__(self, module, layer):
+        self.module = module
+        self.layer = layer
 
-    if name is None:
-        width: int = shape[0]
-        for x in shape:
-            width = x if (x > width) else width
-        name = f'Deep_NN_{len(shape)}x{width}'
-
-    lr_choice = {'valley': 0, 'slide': 1, 'steep': 2, 'minimum': 3}[lr_choice]
-
-
-    categorical_features: list = []
-    untouched_features  : list = []
-
-    for x in leave_out:
-        if x in df.columns:
-            untouched_features.append(x)
-
-    for x in categorical:
-        if x in df.columns:
-            categorical_features.append(x)
-
-        
-    if metrics is None:
-        metrics = [accuracy, BalancedAccuracy(), RocAuc(), MatthewsCorrCoef(), F1Score(average='macro'), Precision(average='macro'), Recall(average='macro')]
+    def forward(self, inputs):
+        fx = self.module(inputs)
+        if(inputs.shape != fx.shape):
+            print('mismatch at layer:', self.layer ,inputs.shape, fx.shape)
+            assert False
+        return fx + inputs
 
 
-    continuous_features = list(set(df) - set(categorical_features) - set([target_label]) - set(untouched_features))
-
-    splits = RandomSplitter(valid_pct=split, seed=seed)(range_of(df))
-    
-
-    # The dataframe is loaded into a fastai datastructure now that 
-    # the feature engineering pipeline has been set up
-    to = TabularPandas(
-        df            , y_names=target_label                , 
-        splits=splits , cat_names=categorical_features ,
-        procs=procs   , cont_names=continuous_features , 
-    )
-
-    # The dataframe is then converted into a fastai dataset
-    dls = to.dataloaders(bs=batch_size)
-
-    # extract the file_name from the path
-    p = pathlib.Path(file_name)
-    file_name: str = str(p.parts[-1])
-
-
-    learner = tabular_learner(
-        dls, 
-        layers=list(shape), 
-        metrics = metrics,
-        cbs=callbacks,
-    )
-
-    lr = learner.lr_find(suggest_funcs=[valley, slide, steep, minimum])
-
-
-    # fitting functions, they give different results, some networks perform better with different learning schedule during fitting
-    # learner.fit(epochs, lr[lr_choice])
-    # learner.fit_flat_cos(epochs, lr[lr_choice])
-    learner.fit_one_cycle(epochs, lr_max=lr[lr_choice])
-
-    learner.save(f'{file_name}.model')
-
-    learner.recorder.plot_sched() 
-    results = learner.validate()
-    
-    print(f'loss: {results[0]}, accuracy: {results[1]*100: .2f}%')
-
-    interp = ClassificationInterpretation.from_learner(learner)
-    interp.plot_confusion_matrix()
-
-    X_train = to.train.xs.reset_index(drop=True)
-    X_test = to.valid.xs.reset_index(drop=True)
-    y_train = to.train.ys.values.ravel()
-    y_test = to.valid.ys.values.ravel()
-
-    wrapped_model = SklearnWrapper(learner)
-
-    classes = list(learner.dls.vocab)
-    if len(classes) == 2:
-        wrapped_model.target_type_ = 'binary'
-    elif len(classes) > 2:  
-        wrapped_model.target_type_ = 'multiclass'
-    else:
-        print('Must be more than one class to perform classification')
-        raise ValueError('Wrong number of classes')
-    
-    wrapped_model._target_labels = target_label
-    
-    model_data: Model_data = Model_data(file_name, wrapped_model, classes, X_train, y_train, X_test, y_test, to, dls, name)
-
-
-    return model_data
-
-
-
-def run_residual_deep_nn_experiment(
-    df: pd.DataFrame, 
-    file_name: str, 
-    target_label: str, 
-    shape: tuple, 
-    split=0.2, 
-    categorical: list = ['Protocol'],
-    procs = [FillMissing, Categorify, Normalize], 
-    leave_out: list = [],
-    epochs: int = 10,
-    batch_size: int = 64,
-    metrics: list or None = None,
-    callbacks: list = [ShowGraphCallback],
-    lr_choice: str = 'valley',
-    name: str or None = None,
-) -> Model_data:
+class CardinalResidualBlock(Module):
     '''
-        Function trains a residual deep neural network model on the given data. 
-            Based on ResNet from Deep Residual Learning for Image Recognition by He et al. (2016) 
-            but adapted to tabular data using the answer given here 
-        
-        (https://stackoverflow.com/questions/57229054/how-to-implement-my-own-resnet-with-torch-nn-sequential-in-pytorch)
-        (https://arxiv.org/abs/1512.03385)
+        A residule block that creates a skip connection around a set of n branches
+            where the number of branches is determined by the number of input modules
+            in the branches list parameter.
 
-        Parameters:
-            df: pandas dataframe containing the data
-            file_name: name of the file the dataset came from
-            target_label: the label to predict
-            shape: the shape of the neural network, the i-th value in the tuple represents the number of nodes in the i+1 layer
-                    and the number of entries in the tuple represent the number of layers
-            name: name of the experiment, if none a default is given
-            split: the percentage of the data to use for testing
-            categorical: list of the categorical columns
-            procs: list of preprocessing functions to apply in the dataloaders pipeline
-                    additional options are: 
-                        PCA_tabular (generate n principal components) 
-                        Normal (features are scaled to the interval [0,1])
-            leave_out: list of columns to leave out of the experiment
-            epochs: number of epochs to train for
-            batch_size: number of samples processed in one forward and backward pass of the model
-            metrics: list of metrics to calculate and display during training
-            callbacks: list of callbacks to apply during training
-            lr_choice: where the learning rate sampling function should find the optimal learning rate
-                        choices are: 'valley', 'steep', 'slide', and 'minimum'
-         
-        
-        returns a model data named tuple
-            model_data: tuple = (file_name, model, classes, X_train, y_train, X_test, y_test, model_type)
+        The output of the branches is summed together along with the input
+        Output size of the input module must match the module's input size
     '''
-    shape = tuple(shape)
+    def __init__(self, branches: list, layer: int):
+        self.branches = branches
+        self.layer = layer
 
-    if name is None:
-        width: int = shape[0]
-        for x in shape:
-            width = x if (x > width) else width
-        name = f'Residual_1D_Deep_NN_{len(shape)}x{width}'
+    def forward(self, inputs):
+        fx = self.branches[0](inputs)
+        if(inputs.shape != fx.shape):
+            print('mismatch at layer:', self.layer ,inputs.shape, fx.shape)
+            assert False
+        if(len(self.branches) > 1):
+            for i in range(len(self.branches) - 1):
+                fx += self.branches[i + 1](inputs)
 
-    lr_choice = {'valley': 0, 'slide': 1, 'steep': 2, 'minimum': 3}[lr_choice]
+        return fx + inputs
 
+# currently need to create a bottlenecking block that can be used to reduce the number of inputs
+#   being passed by the residual connection 
 
-    categorical_features: list = []
-    untouched_features  : list = []
-
-    for x in leave_out:
-        if x in df.columns:
-            untouched_features.append(x)
-
-    for x in categorical:
-        if x in df.columns:
-            categorical_features.append(x)
-
-        
-    if metrics is None:
-        metrics = [accuracy, BalancedAccuracy(), RocAuc(), MatthewsCorrCoef(), F1Score(average='macro'), Precision(average='macro'), Recall(average='macro')]
-
-
-    continuous_features = list(set(df) - set(categorical_features) - set([target_label]) - set(untouched_features))
-
-    splits = RandomSplitter(valid_pct=split, seed=seed)(range_of(df))
-    
-
-    # The dataframe is loaded into a fastai datastructure now that 
-    # the feature engineering pipeline has been set up
-    to = TabularPandas(
-        df            , y_names=target_label                , 
-        splits=splits , cat_names=categorical_features ,
-        procs=procs   , cont_names=continuous_features , 
-    )
-
-    # The dataframe is then converted into a fastai dataset
-    dls = to.dataloaders(bs=batch_size)
-
-    # extract the file_name from the path
-    p = pathlib.Path(file_name)
-    file_name: str = str(p.parts[-1])
-
-
-    learner = residual_tabular_learner(
-        dls, 
-        layers=list(shape), 
-        metrics = metrics,
-        cbs=callbacks,
-    )
-
-    lr = learner.lr_find(suggest_funcs=[valley, slide, steep, minimum])
-
-
-    # fitting functions, they give different results, some networks perform better with different learning schedule during fitting
-    # learner.fit(epochs, lr[lr_choice])
-    # learner.fit_flat_cos(epochs, lr[lr_choice])
-    learner.fit_one_cycle(epochs, lr_max=lr[lr_choice])
-
-    learner.save(f'{file_name}.model')
-
-    learner.recorder.plot_sched() 
-    results = learner.validate()
-    
-    print(f'loss: {results[0]}, accuracy: {results[1]*100: .2f}%')
-
-    interp = ClassificationInterpretation.from_learner(learner)
-    interp.plot_confusion_matrix()
-
-    X_train = to.train.xs.reset_index(drop=True)
-    X_test = to.valid.xs.reset_index(drop=True)
-    y_train = to.train.ys.values.ravel()
-    y_test = to.valid.ys.values.ravel()
-
-    wrapped_model = SklearnWrapper(learner)
-
-    classes = list(learner.dls.vocab)
-    if len(classes) == 2:
-        wrapped_model.target_type_ = 'binary'
-    elif len(classes) > 2:  
-        wrapped_model.target_type_ = 'multiclass'
-    else:
-        print('Must be more than one class to perform classification')
-        raise ValueError('Wrong number of classes')
-    
-    wrapped_model._target_labels = target_label
-    
-    model_data: Model_data = Model_data(file_name, wrapped_model, classes, X_train, y_train, X_test, y_test, to, dls, name)
-
-
-    return model_data
-
-
-
-def run_tabnet_experiment(
-    df: pd.DataFrame, 
-    file_name: str, 
-    target_label: str, 
-    split=0.2, 
-    name: str or None = None,
-    categorical: list = ['Protocol'],
-    procs = [FillMissing, Categorify, Normalize], 
-    leave_out: list = [],
-    epochs: int = 10,
-    steps: int = 1,
-    batch_size: int = 64,
-    metrics: list or None = None,
-    attention_size: int = 16,
-    attention_width: int = 16,
-    callbacks: list = [ShowGraphCallback],
-    lr_choice: str = 'valley',
-) -> Model_data:
+class BottleneckResidualBlock(Module):
     '''
-    Function trains a TabNet model on the dataframe and returns a model data named tuple
-        Based on TabNet: Attentive Interpretable Tabular Learning by Sercan Arik and Tomas Pfister from Google Cloud AI (2016)
-            where a DNN selects features from the input features based on an attention layer. Each step of the model selects 
-            different features and uses the input from the previous step to ultimately make predictions
-    
-        Combines aspects of a transformer, decision trees, and deep neural networks to learn tabular data, and has achieved state
-            of the art results on some datasets.
+        A residule block that creates a skip connection around a set of n branches
+            where the number of branches is determined by the number of input modules
+            in the branches list parameter.
 
-        Capable of self-supervised learning, however it is not implemented here yet.
-
-    (https://arxiv.org/pdf/1908.07442.pdf)
-
-    Parameters:
-        df: pandas dataframe containing the data
-        file_name: name of the file the dataset came from
-        target_label: the label to predict
-        name: name of the experiment, if none a default is given
-        split: the percentage of the data to use for testing
-        categorical: list of the categorical columns
-        procs: list of preprocessing functions to apply in the dataloaders pipeline
-                additional options are: 
-                    PCA_tabular (generate n principal components) 
-                    Normal (features are scaled to the interval [0,1])
-        leave_out: list of columns to leave out of the experiment
-        epochs: number of epochs to train for
-        batch_size: number of samples processed in one forward and backward pass of the model
-        metrics: list of metrics to calculate and display during training
-        attention size: determines the number of rows and columns in the attention layers
-        attention width: determines the width of the decision layer
-        callbacks: list of callbacks to apply during training
-        lr_choice: where the learning rate sampling function should find the optimal learning rate
-                    choices are: 'valley', 'steep', 'slide', and 'minimum'
-        
-    
-    returns a model data named tuple
-        model_data: tuple = (file_name, model, classes, X_train, y_train, X_test, y_test, model_type)
+            the residual connection is put through a linear batchnormed layer if the
+            input size is different from the output size
+            Then, the output of the branches is summed together along with the possibly transformed input
     '''
+    def __init__(self, branches: list, layer: int, in_size: int, out_size: int):
+        self.branches = branches
+        self.layer = layer
 
-    if name is None:
-        name = f"TabNet_steps_{steps}_width_{attention_width}_attention_{attention_size}"
+        self.in_size = in_size
+        self.out_size = out_size
 
-    lr_choice = {'valley': 0, 'slide': 1, 'steep': 2, 'minimum': 3}[lr_choice]
+        # self.linear = nn.Linear(in_size, out_size)
+        self.linear = LinBnDrop(in_size, out_size)
+
+    def forward(self, inputs):
+
+        fx = self.branches[0](inputs)
+        for i in range(len(self.branches) - 1):
+            fx += self.branches[i + 1](inputs)
+
+        if(inputs.shape != fx.shape):
+            inputs = self.linear(inputs)
+        return fx + inputs
 
 
-    categorical_features: list = []
-    untouched_features  : list = []
+class ResidualTabularModel(Module):
+    "Residual model for tabular data."
+    def __init__(self, emb_szs, n_cont, out_sz, layers, ps=None, embed_p=0.,
+                 y_range=None, use_bn=True, bn_final=False, bn_cont=True, act_cls=nn.ReLU(inplace=True),
+                 lin_first=True, cardinality: list or None = None):
+        ps = ifnone(ps, [0]*len(layers))
+        if not is_listy(ps): ps = [ps]*len(layers)
+        self.embeds = nn.ModuleList([Embedding(ni, nf) for ni,nf in emb_szs])
+        self.emb_drop = nn.Dropout(embed_p)
+        self.bn_cont = nn.BatchNorm1d(n_cont) if bn_cont else None
+        n_emb = sum(e.embedding_dim for e in self.embeds)
+        self.n_emb,self.n_cont = n_emb,n_cont
+        sizes = [n_emb + n_cont] + layers + [out_sz]
 
-    for x in leave_out:
-        if x in df.columns:
-            untouched_features.append(x)
-
-    for x in categorical:
-        if x in df.columns:
-            categorical_features.append(x)
-
+        # print(f'sizes', sizes)
+        actns = [act_cls for _ in range(len(sizes)-2)] + [None]
         
-    if metrics is None:
-        metrics = [accuracy, BalancedAccuracy(), RocAuc(), MatthewsCorrCoef(), F1Score(average='macro'), Precision(average='macro'), Recall(average='macro')]
+        _layers: list = []
+        num_residuals = 0
+        residual_locations = []
+        enum_length = len(list(enumerate(zip(ps+[0.],actns))))
+        for i, (p, a) in enumerate(zip(ps+[0.],actns)):
+            if(i==0 or i == enum_length-1):
+                _layers.append(LinBnDrop(sizes[i], sizes[i+1], bn=use_bn and (i!=len(actns)-1 or bn_final), p=p, act=a, lin_first=lin_first))
+            else:
+                if(cardinality == None):
+                    modules = [ LinBnDrop(sizes[i], sizes[i+1], bn=use_bn and (i!=len(actns)-1 or bn_final), p=p, act=a, lin_first=lin_first), ]
+                else:
+                    modules = [ LinBnDrop(sizes[i], sizes[i+1], bn=use_bn and (i!=len(actns)-1 or bn_final), p=p, act=a, lin_first=lin_first) for _ in range(cardinality[i]) ]
+                num_residuals += 1 
+                residual_locations.append(i)
+                _layers.append( BottleneckResidualBlock(modules, i, sizes[i], sizes[i+1]) )
+
+        print(f'Layer sizes: {sizes}, length: {len(sizes)}')
+        print(f'Number of residual blocks: {num_residuals}')
+        print('Residual locations: ', residual_locations)
+
+        if y_range is not None: _layers.append(SigmoidRange(*y_range))
+        self.layers = nn.Sequential(*_layers)
+
+    def forward(self, x_cat, x_cont=None):
+        if self.n_emb != 0:
+            x = [e(x_cat[:,i]) for i,e in enumerate(self.embeds)]
+            x = torch.cat(x, 1)
+            x = self.emb_drop(x)
+        if self.n_cont != 0:
+            if self.bn_cont is not None: x_cont = self.bn_cont(x_cont)
+            x = torch.cat([x, x_cont], 1) if self.n_emb != 0 else x_cont
+        return self.layers(x)
 
 
-    continuous_features = list(set(df) - set(categorical_features) - set([target_label]) - set(untouched_features))
 
-    splits = RandomSplitter(valid_pct=split, seed=seed)(range_of(df))
-    
-    # The dataframe is loaded into a fastai datastructure now that 
-    # the feature engineering pipeline has been set up
-
-    to = TabularPandas(
-        df            , y_names=target_label                , 
-        splits=splits , cat_names=categorical_features ,
-        procs=procs   , cont_names=continuous_features , 
-    )
-
-    # The dataframe is then converted into a fastai dataset
-    dls = to.dataloaders(bs=batch_size)
-
-    # extract the file_name from the path
-    p = pathlib.Path(file_name)
-    file_name: str = str(p.parts[-1])
-
-
-    emb_szs = get_emb_sz(to)
-
-
-    net = TabNet(emb_szs, len(to.cont_names), dls.c, n_d=attention_width, n_a=attention_size, n_steps=steps) 
-    tab_model = Learner(dls, net, loss_func=CrossEntropyLossFlat(), metrics=metrics, opt_func=ranger, cbs=callbacks)
-
-
-
-    lr = tab_model.lr_find(suggest_funcs=[valley, slide, steep, minimum])
-
-    # tab_model.fit_flat_cos(epochs, lr[lr_choice])
-    tab_model.fit_one_cycle(epochs, lr[lr_choice])
-
-    tab_model.save(f'{file_name}.model')
-
-    tab_model.recorder.plot_sched() 
-    results = tab_model.validate()
-    
-    print(f'loss: {results[0]}, accuracy: {results[1]*100: .2f}%')
-
-    interp = ClassificationInterpretation.from_learner(tab_model)
-    interp.plot_confusion_matrix()
-
-    X_train = to.train.xs.reset_index(drop=True)
-    X_test = to.valid.xs.reset_index(drop=True)
-    y_train = to.train.ys.values.ravel()
-    y_test = to.valid.ys.values.ravel()
-
-    wrapped_model = SklearnWrapper(tab_model)
-
-    classes = list(tab_model.dls.vocab)
-    if len(classes) == 2:
-        wrapped_model.target_type_ = 'binary'
-    elif len(classes) > 2:  
-        wrapped_model.target_type_ = 'multiclass'
-    else:
-        print('Must be more than one class to perform classification')
-        raise ValueError('Wrong number of classes')
-    
-    wrapped_model._target_labels = target_label
-    
-    model_data: Model_data = Model_data(file_name, wrapped_model, classes, X_train, y_train, X_test, y_test, to, dls, name)
-
-
-    return model_data
+@delegates(Learner.__init__)
+def residual_tabular_learner(dls, layers=None, emb_szs=None, config=None, n_out=None, y_range=None, cardinality=None, ps=None, **kwargs):
+    "Get a `Learner` using `dls`, with `metrics`, including a `TabularModel` created using the remaining params."
+    if config is None: config = tabular_config()
+    if layers is None: layers = [200,100]
+    to = dls.train_ds
+    emb_szs = get_emb_sz(dls.train_ds, {} if emb_szs is None else emb_szs)
+    if n_out is None: n_out = get_c(dls)
+    assert n_out, "`n_out` is not defined, and could not be inferred from data, set `dls.c` or pass `n_out`"
+    if y_range is None and 'y_range' in config: y_range = config.pop('y_range')
+    model = ResidualTabularModel(emb_szs, len(dls.cont_names), n_out, layers, y_range=y_range, cardinality=cardinality, ps=ps, **config)
+    return TabularLearner(dls, model, **kwargs)
 
 
 
@@ -1510,6 +1345,337 @@ def run_cross_validated_deep_nn_experiment(
     model_datum: Model_datum = Model_datum(model_data_list, fold_results)
 
     return model_datum
+
+def run_residual_deep_nn_experiment(
+    df: pd.DataFrame, 
+    file_name: str, 
+    target_label: str, 
+    shape: tuple, 
+    split=0.2, 
+    categorical: list = ['Protocol'],
+    procs = [FillMissing, Categorify, Normalize], 
+    leave_out: list = [],
+    epochs: int = 10,
+    batch_size: int = 64,
+    metrics: list or None = None,
+    callbacks: list = [ShowGraphCallback],
+    lr_choice: str = 'valley',
+    name: str or None = None,
+    fit_choice: str = 'one_cycle',
+    cardinality: list or None = None,
+    no_bar: bool = False,
+    ps: list or None = None,
+) -> Model_data:
+    '''
+        Function trains a residual deep neural network model on the given data. 
+            Based on ResNet from Deep Residual Learning for Image Recognition by He et al. (2016) 
+            as well as the ResNext network proposed by Xie et al. (2017) but adapted to tabular data  
+        
+        (https://arxiv.org/abs/1512.03385)
+        (https://arxiv.org/abs/1611.05431)
+
+        Parameters:
+            df: pandas dataframe containing the data
+            file_name: name of the file the dataset came from
+            target_label: the label to predict
+            shape: the shape of the neural network, the i-th value in the tuple represents the number of nodes in the i+1 layer
+                    and the number of entries in the tuple represent the number of layers
+            name: name of the experiment, if none a default is given
+            split: the percentage of the data to use for testing
+            categorical: list of the categorical columns
+            procs: list of preprocessing functions to apply in the dataloaders pipeline
+                    additional options are: 
+                        PCA_tabular (generate n principal components) 
+                        Normal (features are scaled to the interval [0,1])
+            leave_out: list of columns to leave out of the experiment
+            epochs: number of epochs to train for
+            batch_size: number of samples processed in one forward and backward pass of the model
+            metrics: list of metrics to calculate and display during training
+            callbacks: list of callbacks to apply during training
+            lr_choice: where the learning rate sampling function should find the optimal learning rate
+                        choices are: 'valley', 'steep', 'slide', and 'minimum'
+            fit_choice: choice of function that controls the learning schedule choices are:
+                    'fit': a standard learning schedule 
+                    'flat_cos': a learning schedule that starts high before annealing to a low value
+                    'one_cyle': a learning schedule that warms up for the first epochs, continues at a high
+                                    learning rate, and then cools down for the last epochs
+                    the default is 'one_cycle'
+            cardinality: list of integers that represent the number of residual blocks in each layer, if none
+                            the default is one block per layer
+
+        
+        returns a model data named tuple
+            model_data: tuple = (file_name, model, classes, X_train, y_train, X_test, y_test, model_type)
+    '''
+    shape = tuple(shape)
+
+    if name is None:
+        width: int = shape[0]
+        for x in shape:
+            width = x if (x > width) else width
+        name = f'Residual_1D_Deep_NN_{len(shape)}x{width}'
+
+    lr_choice = {'valley': 0, 'slide': 1, 'steep': 2, 'minimum': 3}[lr_choice]
+
+
+    categorical_features: list = []
+    untouched_features  : list = []
+
+    for x in leave_out:
+        if x in df.columns:
+            untouched_features.append(x)
+
+    for x in categorical:
+        if x in df.columns:
+            categorical_features.append(x)
+
+        
+    if metrics is None:
+        metrics = [accuracy, BalancedAccuracy(), RocAuc(), MatthewsCorrCoef(), F1Score(average='macro'), Precision(average='macro'), Recall(average='macro')]
+
+
+    continuous_features = list(set(df) - set(categorical_features) - set([target_label]) - set(untouched_features))
+
+    splits = RandomSplitter(valid_pct=split, seed=seed)(range_of(df))
+    
+
+    # The dataframe is loaded into a fastai datastructure now that 
+    # the feature engineering pipeline has been set up
+    to = TabularPandas(
+        df            , y_names=target_label                , 
+        splits=splits , cat_names=categorical_features ,
+        procs=procs   , cont_names=continuous_features , 
+    )
+
+    # The dataframe is then converted into a fastai dataset
+    dls = to.dataloaders(bs=batch_size)
+
+    # extract the file_name from the path
+    p = pathlib.Path(file_name)
+    file_name: str = str(p.parts[-1])
+
+
+    learner = residual_tabular_learner(
+        dls, 
+        layers=list(shape), 
+        metrics = metrics,
+        cbs=callbacks,
+        cardinality=cardinality
+    )
+
+
+    with learner.no_bar() if no_bar else contextlib.ExitStack() as gs:
+
+        lr = learner.lr_find(suggest_funcs=[valley, slide, steep, minimum])
+
+            # fitting functions, they give different results, some networks perform better with different learning schedule during fitting
+        if(fit_choice == 'fit'):
+            learner.fit(epochs, lr[lr_choice])
+        elif(fit_choice == 'flat_cos'):
+            learner.fit_flat_cos(epochs, lr[lr_choice])
+        elif(fit_choice == 'one_cycle'):
+            learner.fit_one_cycle(epochs, lr_max=lr[lr_choice])
+        else:
+            assert False, f'{fit_choice} is not a valid fit_choice'
+
+        learner.recorder.plot_sched() 
+        results = learner.validate()
+        interp = ClassificationInterpretation.from_learner(learner)
+        interp.plot_confusion_matrix()
+                
+
+    print(f'loss: {results[0]}, accuracy: {results[1]*100: .2f}%')
+    learner.save(f'{file_name}.model')
+
+
+    X_train = to.train.xs.reset_index(drop=True)
+    X_test = to.valid.xs.reset_index(drop=True)
+    y_train = to.train.ys.values.ravel()
+    y_test = to.valid.ys.values.ravel()
+
+    wrapped_model = SklearnWrapper(learner)
+
+    classes = list(learner.dls.vocab)
+    if len(classes) == 2:
+        wrapped_model.target_type_ = 'binary'
+    elif len(classes) > 2:  
+        wrapped_model.target_type_ = 'multiclass'
+    else:
+        print('Must be more than one class to perform classification')
+        raise ValueError('Wrong number of classes')
+    
+    wrapped_model._target_labels = target_label
+    
+    model_data: Model_data = Model_data(file_name, wrapped_model, classes, X_train, y_train, X_test, y_test, to, dls, name)
+
+
+    return model_data
+
+
+
+def run_tabnet_experiment(
+    df: pd.DataFrame, 
+    file_name: str, 
+    target_label: str, 
+    split=0.2, 
+    name: str or None = None,
+    categorical: list = ['Protocol'],
+    procs = [FillMissing, Categorify, Normalize], 
+    leave_out: list = [],
+    epochs: int = 10,
+    steps: int = 1,
+    batch_size: int = 64,
+    metrics: list or None = None,
+    attention_size: int = 16,
+    attention_width: int = 16,
+    callbacks: list = [ShowGraphCallback],
+    lr_choice: str = 'valley',
+    fit_choice: str = 'flat_cos',
+    no_bar: bool = False
+) -> Model_data:
+    '''
+    Function trains a TabNet model on the dataframe and returns a model data named tuple
+        Based on TabNet: Attentive Interpretable Tabular Learning by Sercan Arik and Tomas Pfister from Google Cloud AI (2016)
+            where a DNN selects features from the input features based on an attention layer. Each step of the model selects 
+            different features and uses the input from the previous step to ultimately make predictions
+    
+        Combines aspects of a transformer, decision trees, and deep neural networks to learn tabular data, and has achieved state
+            of the art results on some datasets.
+
+        Capable of self-supervised learning, however it is not implemented here yet.
+
+    (https://arxiv.org/pdf/1908.07442.pdf)
+
+    Parameters:
+        df: pandas dataframe containing the data
+        file_name: name of the file the dataset came from
+        target_label: the label to predict
+        name: name of the experiment, if none a default is given
+        split: the percentage of the data to use for testing
+        categorical: list of the categorical columns
+        procs: list of preprocessing functions to apply in the dataloaders pipeline
+                additional options are: 
+                    PCA_tabular (generate n principal components) 
+                    Normal (features are scaled to the interval [0,1])
+        leave_out: list of columns to leave out of the experiment
+        epochs: number of epochs to train for  
+        batch_size: number of samples processed in one forward and backward pass of the model
+        metrics: list of metrics to calculate and display during training
+        attention size: determines the number of rows and columns in the attention layers
+        attention width: determines the width of the decision layer
+        callbacks: list of callbacks to apply during training
+        lr_choice: where the learning rate sampling function should find the optimal learning rate
+                    choices are: 'valley', 'steep', 'slide', and 'minimum'
+        fit_choice: choice of function that controls the learning schedule choices are:
+                    'fit': a standard learning schedule 
+                    'flat_cos': a learning schedule that starts high before annealing to a low value
+                    'one_cyle': a learning schedule that warms up for the first epochs, continues at a high
+                                    learning rate, and then cools down for the last epochs
+                    the default is 'flat_cos'
+
+    
+    returns a model data named tuple
+        model_data: tuple = (file_name, model, classes, X_train, y_train, X_test, y_test, model_type)
+    '''
+
+    if name is None:
+        name = f"TabNet_steps_{steps}_width_{attention_width}_attention_{attention_size}"
+
+    lr_choice = {'valley': 0, 'slide': 1, 'steep': 2, 'minimum': 3}[lr_choice]
+
+
+    categorical_features: list = []
+    untouched_features  : list = []
+
+    for x in leave_out:
+        if x in df.columns:
+            untouched_features.append(x)
+
+    for x in categorical:
+        if x in df.columns:
+            categorical_features.append(x)
+
+        
+    if metrics is None:
+        metrics = [accuracy, BalancedAccuracy(), RocAuc(), MatthewsCorrCoef(), F1Score(average='macro'), Precision(average='macro'), Recall(average='macro')]
+
+
+    continuous_features = list(set(df) - set(categorical_features) - set([target_label]) - set(untouched_features))
+
+    splits = RandomSplitter(valid_pct=split, seed=seed)(range_of(df))
+    
+    # The dataframe is loaded into a fastai datastructure now that 
+    # the feature engineering pipeline has been set up
+
+    to = TabularPandas(
+        df            , y_names=target_label                , 
+        splits=splits , cat_names=categorical_features ,
+        procs=procs   , cont_names=continuous_features , 
+    )
+
+    # The dataframe is then converted into a fastai dataset
+    dls = to.dataloaders(bs=batch_size)
+
+    # extract the file_name from the path
+    p = pathlib.Path(file_name)
+    file_name: str = str(p.parts[-1])
+
+
+    emb_szs = get_emb_sz(to)
+
+
+    net = TabNet(emb_szs, len(to.cont_names), dls.c, n_d=attention_width, n_a=attention_size, n_steps=steps) 
+    tab_model = Learner(dls, net, loss_func=CrossEntropyLossFlat(), metrics=metrics, opt_func=ranger, cbs=callbacks)
+
+
+    with tab_model.no_bar() if tab_model else contextlib.ExitStack() as gs:
+
+        lr = tab_model.lr_find(suggest_funcs=[valley, slide, steep, minimum])
+
+
+        # fitting functions, they give different results, some networks perform better with different learning schedule during fitting
+        if(fit_choice == 'fit'):
+            tab_model.fit(epochs, lr[lr_choice])
+        elif(fit_choice == 'flat_cos'):
+            tab_model.fit_flat_cos(epochs, lr[lr_choice])
+        elif(fit_choice == 'one_cycle'):
+            tab_model.fit_one_cycle(epochs, lr_max=lr[lr_choice])
+        else:
+            assert False, f'{fit_choice} is not a valid fit_choice'
+
+
+        tab_model.recorder.plot_sched() 
+        results = tab_model.validate()
+        interp = ClassificationInterpretation.from_learner(tab_model)
+        interp.plot_confusion_matrix()
+                
+
+    tab_model.save(f'{file_name}.model')
+    print(f'loss: {results[0]}, accuracy: {results[1]*100: .2f}%')
+
+
+    X_train = to.train.xs.reset_index(drop=True)
+    X_test = to.valid.xs.reset_index(drop=True)
+    y_train = to.train.ys.values.ravel()
+    y_test = to.valid.ys.values.ravel()
+
+    wrapped_model = SklearnWrapper(tab_model)
+
+    classes = list(tab_model.dls.vocab)
+    if len(classes) == 2:
+        wrapped_model.target_type_ = 'binary'
+    elif len(classes) > 2:  
+        wrapped_model.target_type_ = 'multiclass'
+    else:
+        print('Must be more than one class to perform classification')
+        raise ValueError('Wrong number of classes')
+    
+    wrapped_model._target_labels = target_label
+    
+    model_data: Model_data = Model_data(file_name, wrapped_model, classes, X_train, y_train, X_test, y_test, to, dls, name)
+
+
+    return model_data
 
 
 def decode_classes_and_create_Xy_df(model_data: Model_data, target_label: str):
