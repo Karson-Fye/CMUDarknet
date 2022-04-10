@@ -1029,7 +1029,59 @@ def residual_tabular_learner(dls, layers=None, emb_szs=None, config=None, n_out=
     return TabularLearner(dls, model, **kwargs)
 
 
+def extract_validation_set(df: pd.DataFrame, target_label: str, categorical : list = ['Protocol'], leave_out: list = []):
+    '''
+        Run binary classification using a shallow learning model
+        returns the 10-tuple Model_data
+    '''
+    dep_var: str = target_label
 
+    categorical_features: list = []
+    untouched_features  : list = []
+
+    for x in categorical:
+        if x in df.columns:
+            categorical_features.append(x)
+
+    for x in leave_out:
+        if x in df.columns:
+            untouched_features.append(x)
+        
+    continuous_features = list(set(df) - set(categorical_features) - set([dep_var]) - set(untouched_features))
+
+    # Next, we set up the feature engineering pipeline, namely filling missing values
+    # encoding categorical features, and normalizing the continuous features
+    # all within a pipeline to prevent the normalization from leaking details
+    # about the test sets through the normalized mapping of the training sets
+    procs = [FillMissing, Categorify, Normalize]
+    splits = RandomSplitter(valid_pct=.99, seed=seed)(range_of(df))
+    
+    # The dataframe is loaded into a fastai datastructure now that 
+    # the feature engineering pipeline has been set up
+    to = TabularPandas(
+        df            , y_names=dep_var                , 
+        splits=splits , cat_names=categorical_features ,
+        procs=procs   , cont_names=continuous_features , 
+    )
+
+    # We use fastai to quickly extract the names of the classes as they are mapped to the encodings
+    dls = to.dataloaders(bs=64)
+    #model = utils.tabular_learner(dls)
+    #classes : list = list(model.dls.vocab)
+
+
+    # We extract the training and test datasets from the dataframe
+    X_train = to.train.xs.reset_index(drop=True)
+    X_test = to.valid.xs.reset_index(drop=True)
+    y_train = to.train.ys.values.ravel()
+    y_test = to.valid.ys.values.ravel()
+
+
+    # We extract the training and test datasets from the dataframe
+    X_test = to.valid.xs.reset_index(drop=True)
+    y_test = to.valid.ys.values.ravel()
+    
+    return X_test, y_test
 
 ## Todo: make into general function that takes sklearn model instead of just a knn
 
