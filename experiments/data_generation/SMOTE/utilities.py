@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 import yellowbrick as yb
 import imblearn 
-from imblearn.over_sampling import SMOTE
+from imblearn.over_sampling import SMOTE, SMOTENC
 from collections import Counter
 from matplotlib import pyplot
 
