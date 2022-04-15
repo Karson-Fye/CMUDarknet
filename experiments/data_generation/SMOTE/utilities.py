@@ -1053,7 +1053,7 @@ def extract_validation_set(df: pd.DataFrame, target_label: str, categorical : li
     # encoding categorical features, and normalizing the continuous features
     # all within a pipeline to prevent the normalization from leaking details
     # about the test sets through the normalized mapping of the training sets
-    procs = [FillMissing, Categorify, Normalize]
+    procs = [FillMissing, Categorify]
     splits = RandomSplitter(valid_pct=.99, seed=seed)(range_of(df))
     
     # The dataframe is loaded into a fastai datastructure now that 
@@ -1116,7 +1116,7 @@ def run_knn_experiment(df: pd.DataFrame, name: str, target_label: str, split=0.2
     # encoding categorical features, and normalizing the continuous features
     # all within a pipeline to prevent the normalization from leaking details
     # about the test sets through the normalized mapping of the training sets
-    procs = [FillMissing, Categorify, Normalize]
+    procs = [FillMissing, Categorify]
     splits = RandomSplitter(valid_pct=split, seed=seed)(range_of(df))
     
     
@@ -1209,7 +1209,7 @@ def transform_and_split_data(df: pd.DataFrame, target_label: str, split=0, name=
     # encoding categorical features, and normalizing the continuous features
     # all within a pipeline to prevent the normalization from leaking details
     # about the test sets through the normalized mapping of the training sets
-    procs = [FillMissing, Categorify, Normalize]
+    procs = [FillMissing, Categorify]
     if(scale): 
         procs.append(Normal)
 
@@ -1269,7 +1269,7 @@ def run_cross_validated_deep_nn_experiment(
     dropout_rate: float = 0.01,
     callbacks: list = [ShowGraphCallback],
     metrics: list or None= None,
-    procs: list = [FillMissing, Categorify, Normalize],
+    procs: list = [FillMissing, Categorify],
     experiment_type: str or None = None,
     epochs: int = 10,
     batch_size: int = 64,
@@ -1405,7 +1405,7 @@ def run_residual_deep_nn_experiment(
     shape: tuple, 
     split=0.2, 
     categorical: list = ['Protocol'],
-    procs = [FillMissing, Categorify, Normalize], 
+    procs = [FillMissing, Categorify], 
     leave_out: list = [],
     epochs: int = 10,
     batch_size: int = 64,
@@ -1572,7 +1572,7 @@ def run_tabnet_experiment(
     split=0.2, 
     name: str or None = None,
     categorical: list = ['Protocol'],
-    procs = [FillMissing, Categorify, Normalize], 
+    procs = [FillMissing, Categorify], 
     leave_out: list = [],
     epochs: int = 10,
     steps: int = 1,
