@@ -13,7 +13,7 @@ __pycache__/
 *.arff
 
 # Fastai models
-*.model.pth
+# *.model.pth
 
 # Pickle files for CSV caching
 *.csv.pickle
